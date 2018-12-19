@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <title>LEGO Lights!</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <style>
+    table {
+      border-collapse: collapse;
+    }
+
+    table th,
+    table td {
+      border: solid 1px #cccccc;
+      padding: 3px;
+    }
+  </style>
+
+  <script src="jscolor.js"></script>
+  <script>
+
+
+    function startRefresh() {
+      fetch('/config').
+        then(function (response) {
+          return response.json();
+        })
+        .then(updateTable);
+    }
+
+    function setColor(led, color) {
+      //var formData = new FormData();
+      //formData.append(led, color);
+      fetch('/update?' + led + "=" + color)
+        .then(function (res) { console.log(res) })
+        .catch(error => console.error(error));
+    }
+
+    function updateTable(data) {
+      var body = document.getElementById("tablebody");
+      var i = 0;
+
+      while (body.rows.length < data["colors"].length) {
+        console.log("i:", i, "Color:", data["colors"][i]);
+        var row = body.insertRow(-1);
+        var cell = document.createElement('td');
+        cell.innerText = i;
+        row.appendChild(cell);
+
+        cell = row.insertCell(-1);
+        var field = document.createElement('input');
+        field._led = i;
+        var picker = new jscolor(field);
+        picker.fromString(data["colors"][i]);
+        field.onchange = function () {
+          console.log("CHANGE", this._led, this.value);
+          setColor(this._led, this.value);
+        }
+        cell.appendChild(field);
+
+        i++;
+      }
+    }
+
+  </script>
+</head>
+
+<body onLoad="startRefresh();">
+  <h1>LEGO Lights!</h1>
+  <table>
+    <thead>
+      <tr>
+        <th>LED</th>
+        <th>Colour</th>
+      </tr>
+    </thead>
+    <tbody id="tablebody">
+    </tbody>
+  </table>
+</body>
+
+</html>
