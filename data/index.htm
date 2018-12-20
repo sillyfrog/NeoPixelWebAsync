@@ -20,13 +20,39 @@
   <script src="jscolor.js"></script>
   <script>
 
+    COLOR_PICKER = 'cp';
+    DURATION = 'dur';
 
-    function startRefresh() {
+    LED_SCHEMES = {
+      'none': {},
+      'fade': { 'start': COLOR_PICKER, 'end': COLOR_PICKER, 'dur': DURATION },
+      'fadeoneway': { 'start': COLOR_PICKER, 'end': COLOR_PICKER, 'dur': DURATION },
+      'flicker': { 'start': COLOR_PICKER, 'end': COLOR_PICKER, 'min': DURATION, 'max': DURATION }
+    };
+    var schemes = {};
+    var databack = {};
+
+    function getActiveConfig() {
       fetch('/config').
         then(function (response) {
           return response.json();
         })
-        .then(updateTable);
+        .then(updateTable)
+        .catch(error => console.error(error));
+    }
+
+    function startRefresh() {
+      fetch('/schemes.json').
+        then(function (response) {
+          return response.json();
+        })
+        .then(updateSchemes)
+        .catch(error => console.error(error));
+    }
+
+    function updateSchemes(data) {
+      schemes = data;
+      getActiveConfig();
     }
 
     function setColor(led, color) {
@@ -35,6 +61,129 @@
       fetch('/update?' + led + "=" + color)
         .then(function (res) { console.log(res) })
         .catch(error => console.error(error));
+    }
+
+    function setScheme() {
+      var formData = new FormData();
+      formData.append('data', JSON.stringify(schemes));
+      fetch('/setscheme', {
+        method: "POST",
+        body: formData
+      })
+        .then(function (res) { console.log("setScheme: ", res) })
+        .catch(error => console.error("setScheme Error", error));
+    }
+
+    function editScheme() {
+      var e = document.createElement("div");
+      e._led = this._led;
+
+      var scheme = schemes[this._led];
+
+      var options = document.createElement("select");
+      for (var schemename in LED_SCHEMES) {
+        var opt = document.createElement("option");
+        opt.value = schemename;
+        opt.innerText = schemename;
+        if (schemename == scheme['sc']) {
+          opt.selected = true;
+        }
+        options.appendChild(opt);
+      }
+      options._led = this._led;
+      options.name = "sc";
+      options.onchange = function () { newScheme(this); };
+      e.appendChild(options);
+      this.replaceWith(e);
+      newScheme(options);
+    }
+
+    function newScheme(e) {
+      // Remove all other child elements, then rebuild
+      while (e.nextSibling) {
+        e.nextSibling.remove();
+      }
+
+      var scheme = schemes[e._led];
+
+      schemecontrols = LED_SCHEMES[e.value];
+      for (var control in schemecontrols) {
+        type = schemecontrols[control];
+        var val = scheme[control];
+        if (type == COLOR_PICKER) {
+          var field = document.createElement('input');
+          field.name = control;
+          var picker = new jscolor(field);
+          if (!val) {
+            val = "000000";
+          }
+          picker.fromString(val);
+        }
+        else if (type == DURATION) {
+          var field = document.createElement('input');
+          field.type = "number";
+          field.step = "0.04";
+          field.min = 0;
+          field.name = control;
+          if (!val) {
+            val = "1000";
+          }
+          field.value = parseInt(val) / 1000;
+          field.getValue = function () {
+            return parseInt(parseFloat(this.value) * 1000);
+          }
+        }
+        else {
+          var field = document.createElement('p');
+          field.innerText = "Unknown type: " + control;
+        }
+        field._led = e._led;
+        e.parentNode.appendChild(field);
+      }
+      if (schemecontrols) {
+        var field = document.createElement('button');
+        field.innerText = "Done";
+        field.onclick = saveScheme;
+        e.parentNode.appendChild(field);
+      }
+    }
+
+    function saveScheme() {
+      var e = this.parentNode;
+      var node = e.firstChild;
+      var scheme = {};
+      while (node) {
+        if (node.name) {
+          if (node.getValue) {
+            scheme[node.name] = node.getValue();
+          } else {
+            scheme[node.name] = node.value;
+          }
+        }
+        node = node.nextSibling;
+      }
+      schemes[e._led] = scheme;
+      schemeCell(e.parentNode, e._led);
+    }
+
+    function schemeCell(oldcell, i) {
+      var cell = document.createElement('td');
+      var p = document.createElement('p');
+
+      var scheme = schemes[i];
+      if (!scheme) {
+        scheme = { 'sc': 'none' };
+        schemes[i] = scheme;
+      }
+
+      p.innerText = JSON.stringify(scheme);
+      var button = document.createElement('button');
+      button.innerText = "Edit Scheme";
+      button._led = i;
+      button.onclick = editScheme;
+      cell.appendChild(p);
+      cell.appendChild(button);
+      oldcell.replaceWith(cell);
     }
 
     function updateTable(data) {
@@ -59,6 +208,9 @@
         }
         cell.appendChild(field);
 
+        cell = row.insertCell(-1);
+        schemeCell(cell, i);
+
         i++;
       }
     }
@@ -73,11 +225,13 @@
       <tr>
         <th>LED</th>
         <th>Colour</th>
+        <th>Scheme</th>
       </tr>
     </thead>
     <tbody id="tablebody">
     </tbody>
   </table>
+  <button onclick="setScheme();">Save LED Schemes</button>
 </body>
 
 </html>

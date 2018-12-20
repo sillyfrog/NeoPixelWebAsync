@@ -69,7 +69,7 @@ void loadConfig()
       {
         break;
       }
-      Serial.printf("Setting: %d to %d\n", i, hextolong(s));
+      Serial.printf("Setting: %d to %lX\n", i, hextolong(s));
 
       strip.setPixelColor(i, hextolong(s));
       i++;
@@ -100,6 +100,43 @@ void handleUpdate(AsyncWebServerRequest *request)
     color = hextolong(p->value().c_str());
     Serial.println(color);
     strip.setPixelColor(led, color);
+  }
+
+  doledupdate = true;
+  request->send(200, "text/plain", message);
+  configchanged = true;
+}
+
+void handleSetScheme(AsyncWebServerRequest *request)
+{
+  String message = "Saved\n";
+  Serial.println("About to read data");
+  int params = request->params();
+  String jsonstr;
+  for (int i = 0; i < params; i++)
+  {
+    AsyncWebParameter *p = request->getParam(i);
+    if (p->name() == String("data"))
+    {
+      Serial.println("Match!");
+      jsonstr = p->value();
+    }
+  }
+
+  if (jsonstr.length())
+  {
+    Serial.println("Got data:");
+    Serial.println(jsonstr);
+
+    File f = SPIFFS.open("/schemes.json", "w");
+    f.print(jsonstr);
+    f.close();
+
+    Serial.println("Saved:");
+  }
+  else
+  {
+    Serial.println("No DATA!");
   }
 
   doledupdate = true;
@@ -208,7 +245,8 @@ void setup()
 
   server.serveStatic("/", SPIFFS, "/").setDefaultFile("index.htm");
 
-  server.on("/update", HTTP_POST + HTTP_GET, handleUpdate);
+  server.on("/update", HTTP_GET + HTTP_POST, handleUpdate);
+  server.on("/setscheme", HTTP_POST, handleSetScheme);
 
   server.on("/config", HTTP_GET, handleConfig);
 
@@ -230,14 +268,14 @@ void loop()
     }
     else
     {
-      Serial.printf("Doing update at %d, Free Heap: %d\n", millis(), ESP.getFreeHeap());
+      Serial.printf("Doing update at %lu, Free Heap: %du\n", millis(), ESP.getFreeHeap());
       delay(0);
       strip.show();
       delay(0);
       doledupdate = false;
       nextupdate = now + UPDATE_FREQ;
       minnextupdate = now + MAX_FREQ;
-      Serial.printf("That took %d millis\n", millis() - now);
+      Serial.printf("That took %lu millis\n", millis() - now);
     }
   }
   if (configchanged && now > nextsave)

@@ -1,0 +1,9 @@
+{
+    "terminal.integrated.env.osx": {
+        "PATH": "/Users/tdavis/.platformio/penv/bin:/Users/tdavis/.platformio/penv:/usr/local/opt/sqlite/bin:/Users/tdavis/.pyenv/bin:/Library/Frameworks/Python.framework/Versions/3.7/bin:/Library/Frameworks/Python.framework/Versions/2.7/bin:/Users/tdavis/Library/Python/3.7/bin/:/Users/tdavis/Library/Python/2.7/bin:/Users/tdavis/work/internal/nb-devtools/bin:/opt/local/libexec/gnubin/:/opt/local/bin:/opt/local/sbin:/usr/local/opt/coreutils/libexec/gnubin:/Users/tdavis/work/internal/nb-devtools/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Applications/Wireshark.app/Contents/MacOS:/Applications/MacVim.app/Contents/bin",
+        "PLATFORMIO_CALLER": "vscode"
+    },
+    "files.associations": {
+        "functional": "cpp"
+    }
+}
