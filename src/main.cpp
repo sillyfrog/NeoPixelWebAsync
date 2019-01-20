@@ -15,15 +15,45 @@
 
 #define PIN D1
 
-#define NUM_LEDS 20
+#define NUM_LEDS 32
 #define BRIGHTNESS 255
 
+#define SCHEME_UPDATES 50 // 25 updates per second
+
 #define WEB_PORT 80
+
 Adafruit_NeoPixel strip = Adafruit_NeoPixel(NUM_LEDS, PIN, NEO_GRB + NEO_KHZ800);
+
+struct RGBW
+{
+  byte r;
+  byte g;
+  byte b;
+  byte w;
+};
+
+struct Scheme
+{
+  byte type;
+  RGBW start;
+  RGBW end;
+  unsigned int dur;
+  unsigned int altdur;
+  unsigned long state;
+};
+
+Scheme schemes[NUM_LEDS];
+
+// Schemes that are known/supported, also needs to be copied to JS code
+#define NONE 0
+#define FADE 1
+#define FADE_ONE_WAY 2
+#define FLICKER 3
 
 AsyncWebServer server(WEB_PORT);
 
 bool doledupdate = true;
+unsigned long nextschemeupdate = SCHEME_UPDATES;
 unsigned long nextupdate = 0;
 unsigned long minnextupdate = 0;
 #define UPDATE_FREQ 1000;
@@ -36,6 +66,30 @@ unsigned long nextsave = 0;
 unsigned long hextolong(String hex)
 {
   return strtoul(hex.c_str(), NULL, 16);
+}
+
+RGBW toRGBW(unsigned long src)
+{
+  RGBW ret;
+  ret.r = (src >> 16) & 0xFF;
+  ret.g = (src >> 8) & 0xFF;
+  ret.b = (src >> 0) & 0xFF;
+  ret.w = (src >> 24) & 0xFF;
+  return ret;
+}
+RGBW toRGBW(String srcstr)
+{
+  return toRGBW(hextolong(srcstr));
+}
+
+unsigned long fromRGBW(RGBW src)
+{
+  unsigned long ret;
+  ret = src.r;
+  ret += src.g << 8;
+  ret += src.b << 16;
+  ret += src.w << 24;
+  return ret;
 }
 
 void saveConfig()
@@ -163,6 +217,155 @@ void handleConfig(AsyncWebServerRequest *request)
   request->send(response);
 }
 
+// Loads the schemes from file
+void loadSchemes()
+{
+  unsigned long et = millis();
+
+  //DynamicJsonBuffer schemeJsonBuffer;
+  StaticJsonBuffer<127 * NUM_LEDS> schemesJsonBuffer;
+
+  File f = SPIFFS.open("/schemes.json", "r");
+  if (!f)
+  {
+    Serial.println("file open failed");
+    File f = SPIFFS.open("/schemes.json", "w");
+    f.print("{}");
+    f.close();
+    return;
+  }
+  JsonObject &jschemes = schemesJsonBuffer.parseObject(f);
+  Serial.print("Success: ");
+  Serial.println(jschemes.success());
+  String tmp;
+  for (int i = 0; i < NUM_LEDS; i++)
+  {
+    if (jschemes.containsKey(String(i)))
+    {
+      JsonObject &jscheme = jschemes[String(i)];
+
+      if (jscheme.containsKey("start"))
+      {
+        tmp = jscheme["start"].as<String>();
+        schemes[i].start = toRGBW(tmp);
+      }
+      if (jscheme.containsKey("end"))
+      {
+        tmp = jscheme["end"].as<String>();
+        schemes[i].end = toRGBW(tmp);
+      }
+      if (jscheme.containsKey("dur"))
+      {
+        schemes[i].dur = jscheme["dur"];
+      }
+      if (jscheme.containsKey("altdur"))
+      {
+        schemes[i].altdur = jscheme["altdur"];
+      }
+
+      String stype = jscheme["sc"];
+      Serial.println(stype);
+      if (stype.equals("fade"))
+      {
+        schemes[i].type = FADE;
+      }
+      else if (stype.equals("fadeoneway"))
+      {
+        schemes[i].type = FADE_ONE_WAY;
+      }
+      else if (stype.equals("flicker"))
+      {
+        schemes[i].type = FLICKER;
+      }
+      else
+      {
+        schemes[i].type = NONE;
+      }
+      schemes[i].state = 0;
+    }
+  }
+  Serial.print("Total time:");
+  Serial.println(millis() - et);
+  f.close();
+}
+
+byte colprogress(byte start, byte end, float pcg)
+{
+  int total = end - start;
+  byte ret = start + (total * pcg);
+  return ret;
+}
+
+RGBW blend(RGBW a, RGBW b, float pcg)
+{
+  RGBW out;
+  out.r = colprogress(a.r, b.r, pcg);
+  out.g = colprogress(a.g, b.g, pcg);
+  out.b = colprogress(a.b, b.b, pcg);
+  out.w = colprogress(a.w, b.w, pcg);
+  return out;
+}
+
+void updateLEDSchemes()
+{
+  unsigned long now = millis();
+  for (int i = 0; i < NUM_LEDS; i++)
+  {
+    Scheme scheme = schemes[i];
+    if (scheme.type == NONE)
+    {
+      continue;
+    }
+    RGBW out;
+    bool updated = false;
+    if (scheme.type == FADE)
+    {
+      unsigned long step = now % scheme.dur;
+      float pcg = (float)step / (float)scheme.dur;
+      if (pcg < 0.5)
+        pcg = pcg * 2;
+      else
+        pcg = (1.0 - pcg) * 2;
+      out = blend(scheme.start, scheme.end, pcg);
+      updated = true;
+    }
+    else if (scheme.type == FADE_ONE_WAY)
+    {
+      unsigned long step = now % scheme.dur;
+      float pcg = (float)step / (float)scheme.dur;
+      out = blend(scheme.start, scheme.end, pcg);
+      updated = true;
+    }
+
+    else if (scheme.type == FLICKER)
+    {
+      if (now >= scheme.state)
+      {
+        // Time to change colour
+        unsigned long currentcol = strip.getPixelColor(i);
+        if (currentcol == strip.Color(scheme.start.r, scheme.start.g, scheme.start.b))
+        {
+          // turn to end state, and wait alt duration
+          out = scheme.end;
+          unsigned long rand = random(scheme.altdur);
+          schemes[i].state = now + rand + 1;
+        }
+        else
+        {
+          out = scheme.start;
+          schemes[i].state = now + random(scheme.dur) + 1;
+        }
+        updated = true;
+      }
+    }
+    if (updated)
+    {
+      strip.setPixelColor(i, strip.Color(out.r, out.g, out.b));
+    }
+    delay(0);
+  }
+}
+
 void setup()
 {
   Serial.begin(115200);
@@ -253,6 +456,8 @@ void setup()
   server.begin();
   Serial.println("HTTP server started");
   loadConfig();
+  loadSchemes();
+  randomSeed(micros());
 }
 
 void loop()
@@ -268,7 +473,7 @@ void loop()
     }
     else
     {
-      Serial.printf("Doing update at %lu, Free Heap: %du\n", millis(), ESP.getFreeHeap());
+      Serial.printf("Doing update at %lu, Free Heap: %d\n", millis(), ESP.getFreeHeap());
       delay(0);
       strip.show();
       delay(0);
@@ -282,8 +487,17 @@ void loop()
   {
     delay(0);
     saveConfig();
+    delay(0);
+    loadSchemes();
     nextsave = now + MAX_SAVE_FREQ;
     configchanged = false;
+  }
+  if (now >= nextschemeupdate)
+  {
+    updateLEDSchemes();
+    nextschemeupdate = now + SCHEME_UPDATES - (now % SCHEME_UPDATES);
+    delay(0);
+    strip.show();
   }
   //ArduinoOTA.handle();
 }

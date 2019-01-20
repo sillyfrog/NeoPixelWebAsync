@@ -27,15 +27,20 @@
       'none': {},
       'fade': { 'start': COLOR_PICKER, 'end': COLOR_PICKER, 'dur': DURATION },
       'fadeoneway': { 'start': COLOR_PICKER, 'end': COLOR_PICKER, 'dur': DURATION },
-      'flicker': { 'start': COLOR_PICKER, 'end': COLOR_PICKER, 'min': DURATION, 'max': DURATION }
+      'flicker': { 'start': COLOR_PICKER, 'end': COLOR_PICKER, 'dur': DURATION, 'altdur': DURATION }
     };
     var schemes = {};
-    var databack = {};
+    var databack = false;
+    var metadata = {};
+    var forcecleartable = false;
 
     function getActiveConfig() {
       fetch('/config').
         then(function (response) {
           return response.json();
+        })
+        .then(function (response) {
+          databack = response;
         })
         .then(updateTable)
         .catch(error => console.error(error));
@@ -53,6 +58,7 @@
     function updateSchemes(data) {
       schemes = data;
       getActiveConfig();
+      getMetaData();
     }
 
     function setColor(led, color) {
@@ -72,6 +78,7 @@
       })
         .then(function (res) { console.log("setScheme: ", res) })
         .catch(error => console.error("setScheme Error", error));
+      setMetaData();
     }
 
     function editScheme() {
@@ -186,12 +193,48 @@
       oldcell.replaceWith(cell);
     }
 
-    function updateTable(data) {
+    function getMetaData() {
+      fetch('/metadata.json').
+        then(function (response) {
+          return response.json();
+        })
+        .then(function (response) {
+          metadata = response;
+          forcecleartable = true;
+        })
+        .then(updateTable)
+        .catch(error => console.error(error));
+    }
+
+    function setMetaData() {
+      var formData = new FormData();
+      formData.append('data', new Blob([JSON.stringify(metadata)]), '/metadata.json');
+      fetch('/edit', {
+        method: "POST",
+        body: formData
+      })
+        .then(function (res) { console.log("setMetaData: ", res) })
+        .catch(error => console.error("setMetaData Error", error));
+    }
+
+    function updateTable() {
+      if (!databack) {
+        console.log("Ain't got nothing... No table updates");
+        return;
+      }
       var body = document.getElementById("tablebody");
       var i = 0;
 
-      while (body.rows.length < data["colors"].length) {
-        console.log("i:", i, "Color:", data["colors"][i]);
+      if (forcecleartable) {
+        while (body.rows.length) {
+          console.log('length', body.rows.length);
+          body.rows[0].remove();
+        }
+        forcecleartable = false;
+      }
+
+      while (body.rows.length < databack["colors"].length) {
+        console.log("i:", i, "Color:", databack["colors"][i]);
         var row = body.insertRow(-1);
         var cell = document.createElement('td');
         cell.innerText = i;
@@ -201,7 +244,7 @@
         var field = document.createElement('input');
         field._led = i;
         var picker = new jscolor(field);
-        picker.fromString(data["colors"][i]);
+        picker.fromString(databack["colors"][i]);
         field.onchange = function () {
           console.log("CHANGE", this._led, this.value);
           setColor(this._led, this.value);
@@ -210,6 +253,19 @@
 
         cell = row.insertCell(-1);
         schemeCell(cell, i);
+
+        cell = row.insertCell(-1);
+        field = document.createElement('input');
+        var comment = metadata[i];
+        if (!comment) {
+          comment = '';
+        }
+        field.value = comment;
+        field._led = i;
+        field.onchange = function () {
+          metadata[this._led] = this.value;
+        }
+        cell.append(field);
 
         i++;
       }
@@ -226,6 +282,7 @@
         <th>LED</th>
         <th>Colour</th>
         <th>Scheme</th>
+        <th>Comment</th>
       </tr>
     </thead>
     <tbody id="tablebody">
