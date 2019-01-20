@@ -24,7 +24,7 @@
     DURATION = 'dur';
 
     LED_SCHEMES = {
-      'none': {},
+      'none': { 'start': COLOR_PICKER },
       'fade': { 'start': COLOR_PICKER, 'end': COLOR_PICKER, 'dur': DURATION },
       'fadeoneway': { 'start': COLOR_PICKER, 'end': COLOR_PICKER, 'dur': DURATION },
       'flicker': { 'start': COLOR_PICKER, 'end': COLOR_PICKER, 'dur': DURATION, 'altdur': DURATION }
@@ -53,6 +53,9 @@
         })
         .then(updateSchemes)
         .catch(error => console.error(error));
+      getFile('/stripdata.txt', function (response) {
+        document.getElementById("stripsizes").value = response;
+      });
     }
 
     function updateSchemes(data) {
@@ -194,27 +197,47 @@
     }
 
     function getMetaData() {
-      fetch('/metadata.json').
-        then(function (response) {
-          return response.json();
-        })
-        .then(function (response) {
-          metadata = response;
-          forcecleartable = true;
-        })
-        .then(updateTable)
-        .catch(error => console.error(error));
+      getFile('/metadata.json', function (response) {
+        metadata = JSON.parse(response);
+        forcecleartable = true;
+        updateTable();
+      });
     }
 
     function setMetaData() {
+      setFile('/metadata.json', JSON.stringify(metadata));
+    }
+
+    function getFile(filename, callfunc) {
+      fetch(filename).
+        then(function (response) {
+          return response.text();
+        })
+        .then(function (response) {
+          callfunc(response);
+        })
+        .catch(error => console.error("Error getting file:", error));
+    }
+
+    function setFile(filename, datastr) {
       var formData = new FormData();
-      formData.append('data', new Blob([JSON.stringify(metadata)]), '/metadata.json');
+      formData.append('data', new Blob([datastr]), filename);
       fetch('/edit', {
         method: "POST",
         body: formData
       })
-        .then(function (res) { console.log("setMetaData: ", res) })
-        .catch(error => console.error("setMetaData Error", error));
+        .then(function (res) { console.log("setFile:", filename, res) })
+        .catch(error => console.error("setFile Error:", error));
+    }
+
+    function saveSize() {
+      var e = document.getElementById("stripsizes");
+      var sizeinfo = e.value;
+      sizeinfo = sizeinfo.replace("\r", "");
+      if (sizeinfo.substring(sizeinfo.length - 1) != "\n") {
+        sizeinfo += "\n";
+      }
+      setFile('/stripdata.txt', sizeinfo);
     }
 
     function updateTable() {
@@ -289,6 +312,12 @@
     </tbody>
   </table>
   <button onclick="setScheme();">Save LED Schemes</button>
+
+  <p>&nbsp;</p>
+  <div>
+    <textarea id="stripsizes">20</textarea>
+    <button onclick="saveSize();">Save and Reboot</button>
+  </div>
 </body>
 
 </html>

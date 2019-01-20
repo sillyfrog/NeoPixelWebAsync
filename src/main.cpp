@@ -15,14 +15,22 @@
 
 #define PIN D1
 
-#define NUM_LEDS 32
+#define MAX_NUM_STRIPS 3
+#define MAX_NUM_LEDS MAX_NUM_STRIPS * 30
 #define BRIGHTNESS 255
 
 #define SCHEME_UPDATES 50 // 25 updates per second
 
 #define WEB_PORT 80
 
-Adafruit_NeoPixel strip = Adafruit_NeoPixel(NUM_LEDS, PIN, NEO_GRB + NEO_KHZ800);
+uint16_t strip_sizes[MAX_NUM_STRIPS];
+uint16_t total_pixels = 0;
+
+uint8_t pin_allocations[] = {D1, D2, D3};
+
+//= Adafruit_NeoPixel(NUM_LEDS, PIN, NEO_GRB + NEO_KHZ800);
+Adafruit_NeoPixel strips[MAX_NUM_STRIPS];
+Adafruit_NeoPixel neofuncs = Adafruit_NeoPixel(0, -1, NEO_GRB + NEO_KHZ800);
 
 struct RGBW
 {
@@ -42,7 +50,7 @@ struct Scheme
   unsigned long state;
 };
 
-Scheme schemes[NUM_LEDS];
+Scheme schemes[MAX_NUM_LEDS];
 
 // Schemes that are known/supported, also needs to be copied to JS code
 #define NONE 0
@@ -92,6 +100,7 @@ unsigned long fromRGBW(RGBW src)
   return ret;
 }
 
+/*
 void saveConfig()
 {
   Serial.println("Saving Config...");
@@ -104,7 +113,109 @@ void saveConfig()
   }
   f.close();
 }
+*/
 
+void loadStripConfig()
+{
+  File f = SPIFFS.open("/stripdata.txt", "r");
+  if (!f)
+  {
+    Serial.println("file open failed");
+  }
+  else
+  {
+    int i = 0;
+    total_pixels = 0;
+    while (true)
+    {
+      String s = f.readStringUntil('\n');
+      Serial.printf("Got stripsize: [%s]\n", s.c_str());
+      strip_sizes[i] = s.toInt();
+      total_pixels += strip_sizes[i];
+      Serial.printf("Setting size of strip %d to %d\n", i, strip_sizes[i]);
+
+      // Actually configure the strip
+      strips[i].updateLength(strip_sizes[i]);
+      strips[i].updateType(NEO_GRB + NEO_KHZ800);
+      strips[i].setPin(pin_allocations[i]);
+      strips[i].setBrightness(BRIGHTNESS);
+      strips[i].begin();
+      delay(0);
+      i++;
+      if (i >= MAX_NUM_STRIPS)
+      {
+        break;
+      }
+    }
+    f.close();
+    // Ensure all unused strips are set to zero size
+    while (i < MAX_NUM_STRIPS)
+    {
+      strip_sizes[i] = 0;
+      i++;
+    }
+  }
+}
+
+void setPixelColor(uint16_t n, uint32_t c)
+{
+  // First figure out the strip to apply this to
+  int i = 0;
+  while (i < MAX_NUM_STRIPS)
+  {
+    if (n >= strips[i].numPixels())
+    {
+      n -= strips[i].numPixels();
+      i++;
+    }
+    else
+    {
+      break;
+    }
+  }
+  // Apply gamma correction to each color component
+  // XXX need to handle white should we support it down the track
+  uint8_t r = neofuncs.gamma8((uint8_t)(c >> 16));
+  uint8_t g = neofuncs.gamma8((uint8_t)(c >> 8));
+  uint8_t b = neofuncs.gamma8((uint8_t)c);
+  strips[i].setPixelColor(n, r, g, b);
+}
+
+uint32_t getPixelColor(uint16_t n)
+{
+  // First figure out the strip to apply this to
+  int i = 0;
+  while (i < MAX_NUM_STRIPS)
+  {
+    if (n >= strips[i].numPixels())
+    {
+      n -= strips[i].numPixels();
+      i++;
+    }
+    else
+    {
+      break;
+    }
+  }
+  return strips[i].getPixelColor(n);
+}
+
+void showAll()
+{
+  Serial.printf("Show all\n");
+  delay(1);
+  for (int i = 0; i < MAX_NUM_STRIPS; i++)
+  {
+    Serial.printf("about to do %d, size %d\n", i, strip_sizes[i]);
+    if (strip_sizes[i] > 0)
+    {
+      strips[i].show();
+      delay(0);
+    }
+  }
+}
+
+/*
 void loadConfig()
 {
   File f = SPIFFS.open("/config.txt", "r");
@@ -131,7 +242,7 @@ void loadConfig()
     f.close();
   }
 }
-
+*/
 void handleUpdate(AsyncWebServerRequest *request)
 {
   Serial.print("Starting: ");
@@ -153,7 +264,7 @@ void handleUpdate(AsyncWebServerRequest *request)
     Serial.print(" to:");
     color = hextolong(p->value().c_str());
     Serial.println(color);
-    strip.setPixelColor(led, color);
+    setPixelColor(led, color);
   }
 
   doledupdate = true;
@@ -207,10 +318,10 @@ void handleConfig(AsyncWebServerRequest *request)
   root["heap"] = ESP.getFreeHeap();
   root["ssid"] = WiFi.SSID();
   JsonArray &colors = root.createNestedArray("colors");
-  for (int i = 0; i < strip.numPixels(); i++)
+  for (int i = 0; i < total_pixels; i++)
   {
-    Serial.printf("LED: %d color %08x\n", i, strip.getPixelColor(i));
-    sprintf(hex, "%06X", strip.getPixelColor(i));
+    Serial.printf("LED: %d color %08x\n", i, getPixelColor(i));
+    sprintf(hex, "%06X", getPixelColor(i));
     colors.add(hex);
   }
   response->setLength();
@@ -223,7 +334,7 @@ void loadSchemes()
   unsigned long et = millis();
 
   //DynamicJsonBuffer schemeJsonBuffer;
-  StaticJsonBuffer<127 * NUM_LEDS> schemesJsonBuffer;
+  StaticJsonBuffer<127 * MAX_NUM_LEDS> schemesJsonBuffer;
 
   File f = SPIFFS.open("/schemes.json", "r");
   if (!f)
@@ -238,7 +349,7 @@ void loadSchemes()
   Serial.print("Success: ");
   Serial.println(jschemes.success());
   String tmp;
-  for (int i = 0; i < NUM_LEDS; i++)
+  for (int i = 0; i < total_pixels; i++)
   {
     if (jschemes.containsKey(String(i)))
     {
@@ -306,19 +417,24 @@ RGBW blend(RGBW a, RGBW b, float pcg)
   return out;
 }
 
+bool donefirstupdate = false;
 void updateLEDSchemes()
 {
   unsigned long now = millis();
-  for (int i = 0; i < NUM_LEDS; i++)
+  for (int i = 0; i < total_pixels; i++)
   {
     Scheme scheme = schemes[i];
-    if (scheme.type == NONE)
-    {
-      continue;
-    }
     RGBW out;
     bool updated = false;
-    if (scheme.type == FADE)
+    if (scheme.type == NONE)
+    {
+      if (!donefirstupdate)
+      {
+        out = scheme.start;
+        updated = true;
+      }
+    }
+    else if (scheme.type == FADE)
     {
       unsigned long step = now % scheme.dur;
       float pcg = (float)step / (float)scheme.dur;
@@ -342,8 +458,8 @@ void updateLEDSchemes()
       if (now >= scheme.state)
       {
         // Time to change colour
-        unsigned long currentcol = strip.getPixelColor(i);
-        if (currentcol == strip.Color(scheme.start.r, scheme.start.g, scheme.start.b))
+        unsigned long currentcol = getPixelColor(i);
+        if (currentcol == neofuncs.Color(scheme.start.r, scheme.start.g, scheme.start.b))
         {
           // turn to end state, and wait alt duration
           out = scheme.end;
@@ -360,10 +476,11 @@ void updateLEDSchemes()
     }
     if (updated)
     {
-      strip.setPixelColor(i, strip.Color(out.r, out.g, out.b));
+      setPixelColor(i, neofuncs.Color(out.r, out.g, out.b));
     }
     delay(0);
   }
+  donefirstupdate = true;
 }
 
 void setup()
@@ -375,15 +492,14 @@ void setup()
   SPIFFS.begin();
   Serial.println("Started SPIFFS");
 
-  strip.setBrightness(BRIGHTNESS);
-  strip.begin();
   /*
   for (uint16_t i = 0; i < strip.numPixels(); i++)
   {
     strip.setPixelColor(i, strip.Color(1, 1, 1));
   }
   */
-  strip.show(); // Initialize all pixels to 'off'
+  loadStripConfig();
+  showAll();
 
   int counter = 0;
 
@@ -396,9 +512,9 @@ void setup()
     counter++;
     for (uint16_t i = 0; i < counter; i++)
     {
-      strip.setPixelColor(i, strip.Color(100, 0, 0));
+      setPixelColor(i, neofuncs.Color(100, 0, 0));
     }
-    strip.show();
+    showAll();
   }
   Serial.println("");
   Serial.print("Connected to ");
@@ -408,9 +524,9 @@ void setup()
 
   for (uint16_t i = 0; i < 10; i++)
   {
-    strip.setPixelColor(i, strip.Color(0, 1, 0));
+    setPixelColor(i, neofuncs.Color(0, 20, 0));
   }
-  strip.show();
+  showAll();
 
   //Send OTA events to the browser
   /*
@@ -455,13 +571,15 @@ void setup()
 
   server.begin();
   Serial.println("HTTP server started");
-  loadConfig();
+  //loadConfig();
   loadSchemes();
   randomSeed(micros());
 }
 
 void loop()
 {
+  Serial.println("XXX ALST Delay...");
+  delay(0);
   unsigned long now = millis();
   if (doledupdate || now >= nextupdate)
   {
@@ -473,10 +591,12 @@ void loop()
     }
     else
     {
-      Serial.printf("Doing update at %lu, Free Heap: %d\n", millis(), ESP.getFreeHeap());
-      delay(0);
-      strip.show();
-      delay(0);
+      Serial.printf("Doing update at %lu, Free Heap: %d\n", millis(), 1);
+      //Serial.printf("Doing update at %lu, Free Heap: %d\n", millis(), ESP.getFreeHeap());
+      Serial.println("XXX Delay...");
+      delay(1);
+      Serial.println("XXX Show all...");
+      showAll();
       doledupdate = false;
       nextupdate = now + UPDATE_FREQ;
       minnextupdate = now + MAX_FREQ;
@@ -485,8 +605,6 @@ void loop()
   }
   if (configchanged && now > nextsave)
   {
-    delay(0);
-    saveConfig();
     delay(0);
     loadSchemes();
     nextsave = now + MAX_SAVE_FREQ;
@@ -497,7 +615,7 @@ void loop()
     updateLEDSchemes();
     nextschemeupdate = now + SCHEME_UPDATES - (now % SCHEME_UPDATES);
     delay(0);
-    strip.show();
+    showAll();
   }
   //ArduinoOTA.handle();
 }
