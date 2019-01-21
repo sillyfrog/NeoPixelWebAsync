@@ -60,14 +60,13 @@ Scheme schemes[MAX_NUM_LEDS];
 
 AsyncWebServer server(WEB_PORT);
 
-bool doledupdate = true;
 unsigned long nextschemeupdate = SCHEME_UPDATES;
 unsigned long nextupdate = 0;
-unsigned long minnextupdate = 0;
 #define UPDATE_FREQ 1000;
 #define MAX_FREQ 50; // XXX
 
 bool configchanged = false;
+bool updatenonescheme = true;
 unsigned long nextsave = 0;
 #define MAX_SAVE_FREQ 10000;
 
@@ -202,11 +201,8 @@ uint32_t getPixelColor(uint16_t n)
 
 void showAll()
 {
-  Serial.printf("Show all\n");
-  delay(1);
   for (int i = 0; i < MAX_NUM_STRIPS; i++)
   {
-    Serial.printf("about to do %d, size %d\n", i, strip_sizes[i]);
     if (strip_sizes[i] > 0)
     {
       strips[i].show();
@@ -215,34 +211,6 @@ void showAll()
   }
 }
 
-/*
-void loadConfig()
-{
-  File f = SPIFFS.open("/config.txt", "r");
-  if (!f)
-  {
-    Serial.println("file open failed");
-  }
-  else
-  {
-    int i = 0;
-    while (true)
-    {
-      String s = f.readStringUntil('\n');
-      Serial.printf("Got s: [%s]\n", s.c_str());
-      if (!s.length() || i >= strip.numPixels())
-      {
-        break;
-      }
-      Serial.printf("Setting: %d to %lX\n", i, hextolong(s));
-
-      strip.setPixelColor(i, hextolong(s));
-      i++;
-    }
-    f.close();
-  }
-}
-*/
 void handleUpdate(AsyncWebServerRequest *request)
 {
   Serial.print("Starting: ");
@@ -267,9 +235,7 @@ void handleUpdate(AsyncWebServerRequest *request)
     setPixelColor(led, color);
   }
 
-  doledupdate = true;
   request->send(200, "text/plain", message);
-  configchanged = true;
 }
 
 void handleSetScheme(AsyncWebServerRequest *request)
@@ -304,9 +270,9 @@ void handleSetScheme(AsyncWebServerRequest *request)
     Serial.println("No DATA!");
   }
 
-  doledupdate = true;
   request->send(200, "text/plain", message);
   configchanged = true;
+  updatenonescheme = true;
 }
 
 void handleConfig(AsyncWebServerRequest *request)
@@ -331,10 +297,16 @@ void handleConfig(AsyncWebServerRequest *request)
 // Loads the schemes from file
 void loadSchemes()
 {
+  //return;
   unsigned long et = millis();
 
   //DynamicJsonBuffer schemeJsonBuffer;
-  StaticJsonBuffer<127 * MAX_NUM_LEDS> schemesJsonBuffer;
+  Serial.print("Before heap: ");
+  Serial.println(ESP.getFreeHeap());
+  //StaticJsonBuffer<(127 * MAX_NUM_LEDS)> schemesJsonBuffer;
+  StaticJsonBuffer<(4031)> schemesJsonBuffer;
+  Serial.print("After heap: ");
+  Serial.println(ESP.getFreeHeap());
 
   File f = SPIFFS.open("/schemes.json", "r");
   if (!f)
@@ -417,7 +389,6 @@ RGBW blend(RGBW a, RGBW b, float pcg)
   return out;
 }
 
-bool donefirstupdate = false;
 void updateLEDSchemes()
 {
   unsigned long now = millis();
@@ -428,7 +399,7 @@ void updateLEDSchemes()
     bool updated = false;
     if (scheme.type == NONE)
     {
-      if (!donefirstupdate)
+      if (updatenonescheme)
       {
         out = scheme.start;
         updated = true;
@@ -480,7 +451,7 @@ void updateLEDSchemes()
     }
     delay(0);
   }
-  donefirstupdate = true;
+  updatenonescheme = false;
 }
 
 void setup()
@@ -503,6 +474,7 @@ void setup()
 
   int counter = 0;
 
+  delay(0);
   WiFi.begin(ssid, password);
   // Wait for connection
   while (WiFi.status() != WL_CONNECTED)
@@ -553,6 +525,7 @@ void setup()
   //ArduinoOTA.setHostname("what");
   //ArduinoOTA.begin();
 
+  delay(0);
   Serial.println("OTA Setup");
 
   // Web Server setup
@@ -569,39 +542,26 @@ void setup()
 
   server.on("/config", HTTP_GET, handleConfig);
 
+  delay(0);
   server.begin();
   Serial.println("HTTP server started");
-  //loadConfig();
+  delay(0);
   loadSchemes();
+  delay(0);
   randomSeed(micros());
+  delay(0);
 }
 
 void loop()
 {
-  Serial.println("XXX ALST Delay...");
-  delay(0);
   unsigned long now = millis();
-  if (doledupdate || now >= nextupdate)
+  if (now >= nextupdate)
   {
-    if (minnextupdate > now)
-    {
-      Serial.println("Updating too fast, ignoring");
-      doledupdate = false;
-      nextupdate = minnextupdate;
-    }
-    else
-    {
-      Serial.printf("Doing update at %lu, Free Heap: %d\n", millis(), 1);
-      //Serial.printf("Doing update at %lu, Free Heap: %d\n", millis(), ESP.getFreeHeap());
-      Serial.println("XXX Delay...");
-      delay(1);
-      Serial.println("XXX Show all...");
-      showAll();
-      doledupdate = false;
-      nextupdate = now + UPDATE_FREQ;
-      minnextupdate = now + MAX_FREQ;
-      Serial.printf("That took %lu millis\n", millis() - now);
-    }
+    Serial.printf("Doing update at %lu, Free Heap: %d, configchanged: %d\n", millis(), ESP.getFreeHeap(), configchanged);
+    delay(0);
+    //showAll()
+    nextupdate = now + UPDATE_FREQ;
+    //Serial.printf("That took %lu millis\n", millis() - now);
   }
   if (configchanged && now > nextsave)
   {

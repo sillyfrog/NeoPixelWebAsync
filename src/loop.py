@@ -3,7 +3,7 @@ import requests
 import time
 import sys
 
-colors = ["000001", "000100", "010000", "000101"]
+colors = ["0000af", "00a100", "510000", "005151"]
 
 
 def main():
@@ -20,14 +20,15 @@ def main():
     while 1:
         ci = (ci + 1) % len(colors)
         color = colors[ci]
-        for i in range(20):
+        for i in range(10):
             time.sleep(0.1)
-            print(counter)
+            print("Counter:", counter)
             url = "http://{}/update".format(ip)
             st = time.time()
             r = requests.get("http://{}/heap".format(ip))
             print(r.text)
-            requests.get(url, data)
+            # requests.get(url, data)
+            requests.get(url + "?{}={}".format(i, color))
             et = time.time()
             print("Time taken:", et - st)
             data[str(i)] = color

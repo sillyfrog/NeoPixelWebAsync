@@ -80,8 +80,10 @@
         body: formData
       })
         .then(function (res) { console.log("setScheme: ", res) })
+        .then(function () {
+          //setMetaData();
+        })
         .catch(error => console.error("setScheme Error", error));
-      setMetaData();
     }
 
     function editScheme() {
