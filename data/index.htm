@@ -29,6 +29,7 @@
       'fadeoneway': { 'start': COLOR_PICKER, 'end': COLOR_PICKER, 'dur': DURATION },
       'flicker': { 'start': COLOR_PICKER, 'end': COLOR_PICKER, 'dur': DURATION, 'altdur': DURATION }
     };
+    var ledcount = 0;
     var schemes = {};
     var databack = false;
     var metadata = {};
@@ -47,6 +48,66 @@
     }
 
     function startRefresh() {
+      fetch('/ledcount').
+        then(function (response) {
+          return response.text();
+        })
+        .then(
+          function (response) {
+            ledcount = parseInt(response);
+          })
+        .then(refreshSchemes)
+        .then(getActiveConfig)
+        .catch(error => console.error(error));
+      getFile('/stripdata.txt', function (response) {
+        document.getElementById("stripsizes").value = response;
+      });
+    }
+
+    var torefresh = new Set();
+    var refreshing = new Set();
+    var refreshid;
+    function refreshSchemes() {
+      for (var i = 0; i < ledcount; i++) {
+        torefresh.add(i);
+      }
+      refreshNextScheme();
+      refreshid = window.setInterval(refreshNextScheme, 500);
+    }
+
+    function refreshNextScheme() {
+      done = 0;
+      for (i of torefresh) {
+        refreshing.add(i);
+        torefresh.delete(i);
+        fetch('/schemes/' + i + '.json').
+          then(function (response) {
+            return response.text();
+          })
+          .then(function (response) {
+            led = i;
+            console.log("Response:", led, response);
+            torefresh.delete(led);
+            schemes[led] = JSON.parse(response);
+            if (torefresh.size == 0) {
+              window.clearInterval(refreshid);
+              forcecleartable = true;
+              updateTable();
+            }
+          })
+          .catch(function (error) {
+            console.error("Error getting file:", error);
+            torefresh.add(i);
+          });
+
+        done++;
+        if (done > 5) {
+          break;
+        }
+      }
+    }
+
+    function XXXstartRefresh() {
       fetch('/schemes.json').
         then(function (response) {
           return response.json();
@@ -58,10 +119,18 @@
       });
     }
 
-    function updateSchemes(data) {
+    function XXXupdateSchemes(data) {
       schemes = data;
       getActiveConfig();
       getMetaData();
+    }
+
+    function refreshScheme() {
+      fetch('/updatescheme', {
+        method: "POST"
+      })
+        .then(function (res) { console.log("updateSchemes:", res) })
+        .catch(error => console.error("updateSchemes Error:", error));
     }
 
     function setColor(led, color) {
@@ -175,6 +244,7 @@
         node = node.nextSibling;
       }
       schemes[e._led] = scheme;
+      setFile('/schemes/' + e._led + '.json', JSON.stringify(scheme));
       schemeCell(e.parentNode, e._led);
     }
 
@@ -210,13 +280,13 @@
       setFile('/metadata.json', JSON.stringify(metadata));
     }
 
-    function getFile(filename, callfunc) {
+    function getFile(filename, callfunc, errorfunc, extra) {
       fetch(filename).
         then(function (response) {
           return response.text();
         })
         .then(function (response) {
-          callfunc(response);
+          callfunc(response, extra);
         })
         .catch(error => console.error("Error getting file:", error));
     }
@@ -313,7 +383,7 @@
     <tbody id="tablebody">
     </tbody>
   </table>
-  <button onclick="setScheme();">Save LED Schemes</button>
+  <button onclick="refreshScheme();">Chip refresh schemes</button>
 
   <p>&nbsp;</p>
   <div>

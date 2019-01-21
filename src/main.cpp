@@ -238,270 +238,263 @@ void handleUpdate(AsyncWebServerRequest *request)
   request->send(200, "text/plain", message);
 }
 
-void handleSetScheme(AsyncWebServerRequest *request)
+void handleLedCount(AsyncWebServerRequest *request)
 {
-  String message = "Saved\n";
-  Serial.println("About to read data");
-  int params = request->params();
-  String jsonstr;
-  for (int i = 0; i < params; i++)
-  {
-    AsyncWebParameter *p = request->getParam(i);
-    if (p->name() == String("data"))
-    {
-      Serial.println("Match!");
-      jsonstr = p->value();
-    }
-  }
-
-  if (jsonstr.length())
-  {
-    Serial.println("Got data:");
-    Serial.println(jsonstr);
-
-    File f = SPIFFS.open("/schemes.json", "w");
-    f.print(jsonstr);
-    f.close();
-
-    Serial.println("Saved:");
-  }
-  else
-  {
-    Serial.println("No DATA!");
-  }
-
+  String message = String(total_pixels);
   request->send(200, "text/plain", message);
-  configchanged = true;
-  updatenonescheme = true;
 }
 
-void handleConfig(AsyncWebServerRequest *request)
+void handleAllSchemes(AsyncWebServerRequest *request)
 {
-  char hex[10];
-  AsyncJsonResponse *response = new AsyncJsonResponse();
-  response->addHeader("Server", "ESP Async Web Server");
-  JsonObject &root = response->getRoot();
-  root["heap"] = ESP.getFreeHeap();
-  root["ssid"] = WiFi.SSID();
-  JsonArray &colors = root.createNestedArray("colors");
+  AsyncResponseStream *response = request->beginResponseStream("text/json");
+  response->print("{-1:-1");
   for (int i = 0; i < total_pixels; i++)
   {
-    Serial.printf("LED: %d color %08x\n", i, getPixelColor(i));
-    sprintf(hex, "%06X", getPixelColor(i));
-    colors.add(hex);
-  }
-  response->setLength();
-  request->send(response);
-}
-
-// Loads the schemes from file
-void loadSchemes()
-{
-  //return;
-  unsigned long et = millis();
-
-  //DynamicJsonBuffer schemeJsonBuffer;
-  Serial.print("Before heap: ");
-  Serial.println(ESP.getFreeHeap());
-  //StaticJsonBuffer<(127 * MAX_NUM_LEDS)> schemesJsonBuffer;
-  StaticJsonBuffer<(4031)> schemesJsonBuffer;
-  Serial.print("After heap: ");
-  Serial.println(ESP.getFreeHeap());
-
-  File f = SPIFFS.open("/schemes.json", "r");
-  if (!f)
-  {
-    Serial.println("file open failed");
-    File f = SPIFFS.open("/schemes.json", "w");
-    f.print("{}");
-    f.close();
-    return;
-  }
-  JsonObject &jschemes = schemesJsonBuffer.parseObject(f);
-  Serial.print("Success: ");
-  Serial.println(jschemes.success());
-  String tmp;
-  for (int i = 0; i < total_pixels; i++)
-  {
-    if (jschemes.containsKey(String(i)))
+    String filename = "/schemes/" + String(i);
+    filename += ".json";
+    Serial.println(filename);
+    File f = SPIFFS.open(filename, "r");
+    if (f)
     {
-      JsonObject &jscheme = jschemes[String(i)];
+      response->printf(",%d:", i);
+      response->print(f.readString)
+    }
+  }
 
-      if (jscheme.containsKey("start"))
-      {
-        tmp = jscheme["start"].as<String>();
-        schemes[i].start = toRGBW(tmp);
-      }
-      if (jscheme.containsKey("end"))
-      {
-        tmp = jscheme["end"].as<String>();
-        schemes[i].end = toRGBW(tmp);
-      }
-      if (jscheme.containsKey("dur"))
-      {
-        schemes[i].dur = jscheme["dur"];
-      }
-      if (jscheme.containsKey("altdur"))
-      {
-        schemes[i].altdur = jscheme["altdur"];
-      }
+  void handleUpdateScheme(AsyncWebServerRequest * request)
+  {
+    String message = "Updating\n";
+    request->send(200, "text/plain", message);
+    configchanged = true;
+    updatenonescheme = true;
+  }
 
-      String stype = jscheme["sc"];
-      Serial.println(stype);
-      if (stype.equals("fade"))
+  void handleConfig(AsyncWebServerRequest * request)
+  {
+    char hex[10];
+    AsyncJsonResponse *response = new AsyncJsonResponse();
+    response->addHeader("Server", "ESP Async Web Server");
+    JsonObject &root = response->getRoot();
+    root["heap"] = ESP.getFreeHeap();
+    root["ssid"] = WiFi.SSID();
+    JsonArray &colors = root.createNestedArray("colors");
+    for (int i = 0; i < total_pixels; i++)
+    {
+      Serial.printf("LED: %d color %08x\n", i, getPixelColor(i));
+      sprintf(hex, "%06X", getPixelColor(i));
+      colors.add(hex);
+    }
+    response->setLength();
+    request->send(response);
+  }
+
+  // Loads the schemes from file files
+  // Stored as 1 file per LED
+  void loadSchemes()
+  {
+    unsigned long et = millis();
+
+    for (int i = 0; i < total_pixels; i++)
+    {
+      String filename = "/schemes/" + String(i);
+      filename += ".json";
+      Serial.println(filename);
+      File f = SPIFFS.open(filename, "r");
+      if (!f)
       {
-        schemes[i].type = FADE;
-      }
-      else if (stype.equals("fadeoneway"))
-      {
-        schemes[i].type = FADE_ONE_WAY;
-      }
-      else if (stype.equals("flicker"))
-      {
-        schemes[i].type = FLICKER;
+        Serial.print("file open failed for: ");
+        Serial.println(filename);
+        File f = SPIFFS.open(filename, "w");
+        f.print("{}");
       }
       else
       {
-        schemes[i].type = NONE;
-      }
-      schemes[i].state = 0;
-    }
-  }
-  Serial.print("Total time:");
-  Serial.println(millis() - et);
-  f.close();
-}
+        Serial.println(ESP.getFreeHeap());
+        // Calculated from https://arduinojson.org/v5/assistant/
+        // plus a bunch of margin
+        StaticJsonBuffer<(500)> schemesJsonBuffer;
+        Serial.println(ESP.getFreeHeap());
+        JsonObject &jscheme = schemesJsonBuffer.parseObject(f);
+        Serial.print("Success: ");
+        Serial.println(jscheme.success());
+        String tmp;
 
-byte colprogress(byte start, byte end, float pcg)
-{
-  int total = end - start;
-  byte ret = start + (total * pcg);
-  return ret;
-}
-
-RGBW blend(RGBW a, RGBW b, float pcg)
-{
-  RGBW out;
-  out.r = colprogress(a.r, b.r, pcg);
-  out.g = colprogress(a.g, b.g, pcg);
-  out.b = colprogress(a.b, b.b, pcg);
-  out.w = colprogress(a.w, b.w, pcg);
-  return out;
-}
-
-void updateLEDSchemes()
-{
-  unsigned long now = millis();
-  for (int i = 0; i < total_pixels; i++)
-  {
-    Scheme scheme = schemes[i];
-    RGBW out;
-    bool updated = false;
-    if (scheme.type == NONE)
-    {
-      if (updatenonescheme)
-      {
-        out = scheme.start;
-        updated = true;
-      }
-    }
-    else if (scheme.type == FADE)
-    {
-      unsigned long step = now % scheme.dur;
-      float pcg = (float)step / (float)scheme.dur;
-      if (pcg < 0.5)
-        pcg = pcg * 2;
-      else
-        pcg = (1.0 - pcg) * 2;
-      out = blend(scheme.start, scheme.end, pcg);
-      updated = true;
-    }
-    else if (scheme.type == FADE_ONE_WAY)
-    {
-      unsigned long step = now % scheme.dur;
-      float pcg = (float)step / (float)scheme.dur;
-      out = blend(scheme.start, scheme.end, pcg);
-      updated = true;
-    }
-
-    else if (scheme.type == FLICKER)
-    {
-      if (now >= scheme.state)
-      {
-        // Time to change colour
-        unsigned long currentcol = getPixelColor(i);
-        if (currentcol == neofuncs.Color(scheme.start.r, scheme.start.g, scheme.start.b))
+        if (jscheme.containsKey("start"))
         {
-          // turn to end state, and wait alt duration
-          out = scheme.end;
-          unsigned long rand = random(scheme.altdur);
-          schemes[i].state = now + rand + 1;
+          tmp = jscheme["start"].as<String>();
+          schemes[i].start = toRGBW(tmp);
+        }
+        if (jscheme.containsKey("end"))
+        {
+          tmp = jscheme["end"].as<String>();
+          schemes[i].end = toRGBW(tmp);
+        }
+        if (jscheme.containsKey("dur"))
+        {
+          schemes[i].dur = jscheme["dur"];
+        }
+        if (jscheme.containsKey("altdur"))
+        {
+          schemes[i].altdur = jscheme["altdur"];
+        }
+
+        String stype = jscheme["sc"];
+        Serial.println(stype);
+        if (stype.equals("fade"))
+        {
+          schemes[i].type = FADE;
+        }
+        else if (stype.equals("fadeoneway"))
+        {
+          schemes[i].type = FADE_ONE_WAY;
+        }
+        else if (stype.equals("flicker"))
+        {
+          schemes[i].type = FLICKER;
         }
         else
         {
-          out = scheme.start;
-          schemes[i].state = now + random(scheme.dur) + 1;
+          schemes[i].type = NONE;
         }
+        schemes[i].state = 0;
+      }
+      f.close();
+      delay(0);
+    }
+    Serial.print("Total time:");
+    Serial.println(millis() - et);
+  }
+
+  byte colprogress(byte start, byte end, float pcg)
+  {
+    int total = end - start;
+    byte ret = start + (total * pcg);
+    return ret;
+  }
+
+  RGBW blend(RGBW a, RGBW b, float pcg)
+  {
+    RGBW out;
+    out.r = colprogress(a.r, b.r, pcg);
+    out.g = colprogress(a.g, b.g, pcg);
+    out.b = colprogress(a.b, b.b, pcg);
+    out.w = colprogress(a.w, b.w, pcg);
+    return out;
+  }
+
+  void updateLEDSchemes()
+  {
+    unsigned long now = millis();
+    for (int i = 0; i < total_pixels; i++)
+    {
+      Scheme scheme = schemes[i];
+      RGBW out;
+      bool updated = false;
+      if (scheme.type == NONE)
+      {
+        if (updatenonescheme)
+        {
+          out = scheme.start;
+          updated = true;
+        }
+      }
+      else if (scheme.type == FADE)
+      {
+        unsigned long step = now % scheme.dur;
+        float pcg = (float)step / (float)scheme.dur;
+        if (pcg < 0.5)
+          pcg = pcg * 2;
+        else
+          pcg = (1.0 - pcg) * 2;
+        out = blend(scheme.start, scheme.end, pcg);
         updated = true;
       }
+      else if (scheme.type == FADE_ONE_WAY)
+      {
+        unsigned long step = now % scheme.dur;
+        float pcg = (float)step / (float)scheme.dur;
+        out = blend(scheme.start, scheme.end, pcg);
+        updated = true;
+      }
+
+      else if (scheme.type == FLICKER)
+      {
+        if (now >= scheme.state)
+        {
+          // Time to change colour
+          unsigned long currentcol = getPixelColor(i);
+          if (currentcol == neofuncs.Color(scheme.start.r, scheme.start.g, scheme.start.b))
+          {
+            // turn to end state, and wait alt duration
+            out = scheme.end;
+            unsigned long rand = random(scheme.altdur);
+            schemes[i].state = now + rand + 1;
+          }
+          else
+          {
+            out = scheme.start;
+            schemes[i].state = now + random(scheme.dur) + 1;
+          }
+          updated = true;
+        }
+      }
+      if (updated)
+      {
+        setPixelColor(i, neofuncs.Color(out.r, out.g, out.b));
+      }
+      delay(0);
     }
-    if (updated)
-    {
-      setPixelColor(i, neofuncs.Color(out.r, out.g, out.b));
-    }
-    delay(0);
+    updatenonescheme = false;
   }
-  updatenonescheme = false;
-}
 
-void setup()
-{
-  Serial.begin(115200);
+  void setup()
+  {
+    Serial.begin(115200);
 
-  Serial.println("\n\n");
-  Serial.println("Starting SPIFFS...");
-  SPIFFS.begin();
-  Serial.println("Started SPIFFS");
+    Serial.println("\n\n");
+    Serial.println("Starting SPIFFS...");
+    SPIFFS.begin();
+    Serial.println("Started SPIFFS");
 
-  /*
+    /*
   for (uint16_t i = 0; i < strip.numPixels(); i++)
   {
     strip.setPixelColor(i, strip.Color(1, 1, 1));
   }
   */
-  loadStripConfig();
-  showAll();
+    loadStripConfig();
+    showAll();
 
-  int counter = 0;
+    int counter = 0;
 
-  delay(0);
-  WiFi.begin(ssid, password);
-  // Wait for connection
-  while (WiFi.status() != WL_CONNECTED)
-  {
-    delay(500);
-    Serial.print(".");
-    counter++;
-    for (uint16_t i = 0; i < counter; i++)
+    delay(0);
+    WiFi.begin(ssid, password);
+    // Wait for connection
+    while (WiFi.status() != WL_CONNECTED)
     {
-      setPixelColor(i, neofuncs.Color(100, 0, 0));
+      delay(500);
+      Serial.print(".");
+      counter++;
+      for (uint16_t i = 0; i < counter; i++)
+      {
+        setPixelColor(i, neofuncs.Color(100, 0, 0));
+      }
+      showAll();
+    }
+    Serial.println("");
+    Serial.print("Connected to ");
+    Serial.println(ssid);
+    Serial.print("IP address: ");
+    Serial.println(WiFi.localIP());
+
+    for (uint16_t i = 0; i < 10; i++)
+    {
+      setPixelColor(i, neofuncs.Color(0, 20, 0));
     }
     showAll();
-  }
-  Serial.println("");
-  Serial.print("Connected to ");
-  Serial.println(ssid);
-  Serial.print("IP address: ");
-  Serial.println(WiFi.localIP());
 
-  for (uint16_t i = 0; i < 10; i++)
-  {
-    setPixelColor(i, neofuncs.Color(0, 20, 0));
-  }
-  showAll();
-
-  //Send OTA events to the browser
-  /*
+    //Send OTA events to the browser
+    /*
   ArduinoOTA.onStart([]() { events.send("Update Start", "ota"); });
   ArduinoOTA.onEnd([]() { events.send("Update End", "ota"); });
   ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
@@ -522,60 +515,61 @@ void setup()
       events.send("End Failed", "ota");
   });
   */
-  //ArduinoOTA.setHostname("what");
-  //ArduinoOTA.begin();
+    //ArduinoOTA.setHostname("what");
+    //ArduinoOTA.begin();
 
-  delay(0);
-  Serial.println("OTA Setup");
-
-  // Web Server setup
-  server.addHandler(new SPIFFSEditor());
-
-  server.on("/heap", HTTP_GET, [](AsyncWebServerRequest *request) {
-    request->send(200, "text/plain", String(ESP.getFreeHeap()));
-  });
-
-  server.serveStatic("/", SPIFFS, "/").setDefaultFile("index.htm");
-
-  server.on("/update", HTTP_GET + HTTP_POST, handleUpdate);
-  server.on("/setscheme", HTTP_POST, handleSetScheme);
-
-  server.on("/config", HTTP_GET, handleConfig);
-
-  delay(0);
-  server.begin();
-  Serial.println("HTTP server started");
-  delay(0);
-  loadSchemes();
-  delay(0);
-  randomSeed(micros());
-  delay(0);
-}
-
-void loop()
-{
-  unsigned long now = millis();
-  if (now >= nextupdate)
-  {
-    Serial.printf("Doing update at %lu, Free Heap: %d, configchanged: %d\n", millis(), ESP.getFreeHeap(), configchanged);
     delay(0);
-    //showAll()
-    nextupdate = now + UPDATE_FREQ;
-    //Serial.printf("That took %lu millis\n", millis() - now);
-  }
-  if (configchanged && now > nextsave)
-  {
+    Serial.println("OTA Setup");
+
+    // Web Server setup
+    server.addHandler(new SPIFFSEditor());
+
+    server.on("/heap", HTTP_GET, [](AsyncWebServerRequest *request) {
+      request->send(200, "text/plain", String(ESP.getFreeHeap()));
+    });
+
+    server.serveStatic("/", SPIFFS, "/").setDefaultFile("index.htm");
+
+    server.on("/update", HTTP_GET + HTTP_POST, handleUpdate);
+    server.on("/updatescheme", HTTP_GET + HTTP_POST, handleUpdateScheme);
+    server.on("/ledcount", HTTP_GET + HTTP_POST, handleLedCount);
+
+    server.on("/config", HTTP_GET, handleConfig);
+
+    delay(0);
+    server.begin();
+    Serial.println("HTTP server started");
     delay(0);
     loadSchemes();
-    nextsave = now + MAX_SAVE_FREQ;
-    configchanged = false;
-  }
-  if (now >= nextschemeupdate)
-  {
-    updateLEDSchemes();
-    nextschemeupdate = now + SCHEME_UPDATES - (now % SCHEME_UPDATES);
     delay(0);
-    showAll();
+    randomSeed(micros());
+    delay(0);
   }
-  //ArduinoOTA.handle();
-}
+
+  void loop()
+  {
+    unsigned long now = millis();
+    if (now >= nextupdate)
+    {
+      Serial.printf("Doing update at %lu, Free Heap: %d, configchanged: %d\n", millis(), ESP.getFreeHeap(), configchanged);
+      delay(0);
+      //showAll()
+      nextupdate = now + UPDATE_FREQ;
+      //Serial.printf("That took %lu millis\n", millis() - now);
+    }
+    if (configchanged && now > nextsave)
+    {
+      delay(0);
+      loadSchemes();
+      nextsave = now + MAX_SAVE_FREQ;
+      configchanged = false;
+    }
+    if (now >= nextschemeupdate)
+    {
+      updateLEDSchemes();
+      nextschemeupdate = now + SCHEME_UPDATES - (now % SCHEME_UPDATES);
+      delay(0);
+      showAll();
+    }
+    //ArduinoOTA.handle();
+  }
