@@ -4,18 +4,10 @@
 <head>
   <meta charset="utf-8">
   <title>LEGO Lights!</title>
-  <link rel="stylesheet" href="/static/style.css" />
-  <style>
-    table {
-      border-collapse: collapse;
-    }
+  <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.2.1/css/bootstrap.min.css" integrity="sha384-GJzZqFGwb1QTTN6wy59ffF1BuGJpLSa9DkKMp0DgiMDm4iYMj70gZWKYbI706tWS"
+    crossorigin="anonymous">
+  <link rel="stylesheet" href="/style.css" />
 
-    table th,
-    table td {
-      border: solid 1px #cccccc;
-      padding: 3px;
-    }
-  </style>
 
   <script src="jscolor.js"></script>
   <script>
@@ -23,13 +15,17 @@
     COLOR_PICKER = 'cp';
     DURATION = 'dur';
 
+    COLOR_UPDATE = "U\n";
+    SCHEME_UPDATE = "S\n";
+
+
+
     LED_SCHEMES = {
       'none': { 'start': COLOR_PICKER },
       'fade': { 'start': COLOR_PICKER, 'end': COLOR_PICKER, 'dur': DURATION },
       'fadeoneway': { 'start': COLOR_PICKER, 'end': COLOR_PICKER, 'dur': DURATION },
       'flicker': { 'start': COLOR_PICKER, 'end': COLOR_PICKER, 'dur': DURATION, 'altdur': DURATION }
     };
-    var ledcount = 0;
     var schemes = {};
     var databack = false;
     var metadata = {};
@@ -48,111 +44,63 @@
     }
 
     function startRefresh() {
-      fetch('/ledcount').
+      fetch('/schemes.txt').
         then(function (response) {
           return response.text();
-        })
-        .then(
-          function (response) {
-            ledcount = parseInt(response);
-          })
-        .then(refreshSchemes)
-        .then(getActiveConfig)
-        .catch(error => console.error(error));
-      getFile('/stripdata.txt', function (response) {
-        document.getElementById("stripsizes").value = response;
-      });
-    }
-
-    var torefresh = new Set();
-    var refreshing = new Set();
-    var refreshid;
-    function refreshSchemes() {
-      for (var i = 0; i < ledcount; i++) {
-        torefresh.add(i);
-      }
-      refreshNextScheme();
-      refreshid = window.setInterval(refreshNextScheme, 500);
-    }
-
-    function refreshNextScheme() {
-      done = 0;
-      for (i of torefresh) {
-        refreshing.add(i);
-        torefresh.delete(i);
-        fetch('/schemes/' + i + '.json').
-          then(function (response) {
-            return response.text();
-          })
-          .then(function (response) {
-            led = i;
-            console.log("Response:", led, response);
-            torefresh.delete(led);
-            schemes[led] = JSON.parse(response);
-            if (torefresh.size == 0) {
-              window.clearInterval(refreshid);
-              forcecleartable = true;
-              updateTable();
-            }
-          })
-          .catch(function (error) {
-            console.error("Error getting file:", error);
-            torefresh.add(i);
-          });
-
-        done++;
-        if (done > 5) {
-          break;
-        }
-      }
-    }
-
-    function XXXstartRefresh() {
-      fetch('/schemes.json').
-        then(function (response) {
-          return response.json();
         })
         .then(updateSchemes)
         .catch(error => console.error(error));
       getFile('/stripdata.txt', function (response) {
         document.getElementById("stripsizes").value = response;
       });
+      startSocket();
     }
 
-    function XXXupdateSchemes(data) {
-      schemes = data;
+    function updateSchemes(data) {
+      lines = data.split('\n');
+      for (line of lines) {
+        parts = line.split(':', 2);
+        console.log("Working:", parts);
+        if (parts.length == 2) {
+          i = parseInt(parts[0]);
+          data = JSON.parse(line.substring(parts[0].length + 1));
+          schemes[i] = data;
+        }
+      }
       getActiveConfig();
       getMetaData();
-    }
-
-    function refreshScheme() {
-      fetch('/updatescheme', {
-        method: "POST"
-      })
-        .then(function (res) { console.log("updateSchemes:", res) })
-        .catch(error => console.error("updateSchemes Error:", error));
     }
 
     function setColor(led, color) {
       //var formData = new FormData();
       //formData.append(led, color);
-      fetch('/update?' + led + "=" + color)
-        .then(function (res) { console.log(res) })
-        .catch(error => console.error(error));
+
+      ws.send(COLOR_UPDATE + JSON.stringify({ "led": led, "color": color }));
+      console.log("Sent Update via WS");
     }
 
     function setScheme() {
-      var formData = new FormData();
-      formData.append('data', JSON.stringify(schemes));
-      fetch('/setscheme', {
-        method: "POST",
-        body: formData
-      })
-        .then(function (res) { console.log("setScheme: ", res) })
-        .then(function () {
-          //setMetaData();
-        })
-        .catch(error => console.error("setScheme Error", error));
+      document.getElementById("setschemebtn").innerText = "Saving...";
+      var schemedata = "";
+      for (i = 0; i < databack["colors"].length; i++) {
+        if (schemes[i]) {
+          schemedata += i + ":" + JSON.stringify(schemes[i]) + "\n";
+        }
+      }
+      console.log("Final data:", schemedata);
+      setFile("/schemes.txt", schemedata,
+        function () {
+          fetch('/updatescheme').
+            then(function (response) {
+              return response.text();
+            })
+            .then(function (resp) {
+              console.log("Update scheme:", resp);
+              document.getElementById("setschemebtn").style.display = "none";
+              document.getElementById("setschemebtn").innerText = "Save LED Schemes";
+            })
+            .catch(error => console.error("Update scheme error:", error));
+        });
     }
 
     function editScheme() {
@@ -194,6 +142,7 @@
         if (type == COLOR_PICKER) {
           var field = document.createElement('input');
           field.name = control;
+          field.size = 8;
           var picker = new jscolor(field);
           if (!val) {
             val = "000000";
@@ -206,6 +155,7 @@
           field.step = "0.04";
           field.min = 0;
           field.name = control;
+          field.style.maxWidth = "4em";
           if (!val) {
             val = "1000";
           }
@@ -244,8 +194,30 @@
         node = node.nextSibling;
       }
       schemes[e._led] = scheme;
-      setFile('/schemes/' + e._led + '.json', JSON.stringify(scheme));
       schemeCell(e.parentNode, e._led);
+      // XXX try updating via web socket
+      data = schemes[e._led];
+      //data['led'] = e._led;
+      ws.send(SCHEME_UPDATE + e._led + "\n" + JSON.stringify(data));
+      console.log("Sent Scheme via WS");
+      document.getElementById("setschemebtn").style.display = "";
+    }
+
+    function brightness(c) {
+      // Returns brightnes, 0-203.975
+      if (c) {
+        var c = c.substring(1);      // strip #
+        var rgb = parseInt(c, 16);   // convert rrggbb to decimal
+        var r = (rgb >> 16) & 0xff;  // extract red
+        var g = (rgb >> 8) & 0xff;  // extract green
+        var b = (rgb >> 0) & 0xff;  // extract blue
+
+        var luma = 0.2126 * r + 0.7152 * g + 0.0722 * b; // per ITU-R BT.709
+
+        return luma;
+      } else {
+        return 200;
+      }
     }
 
     function schemeCell(oldcell, i) {
@@ -258,7 +230,35 @@
         schemes[i] = scheme;
       }
 
-      p.innerText = JSON.stringify(scheme);
+      var html = '<p><b>' + scheme['sc'] + "</b><br/>";
+      var schemecontrols = LED_SCHEMES[scheme['sc']];
+      var donebr = false;
+      for (var control in schemecontrols) {
+        type = schemecontrols[control];
+        var val = scheme[control];
+        if (type == COLOR_PICKER) {
+          if (brightness(val) < 40) {
+            colsty = 'color: white;';
+          }
+          else {
+            colsty = 'color: black;';
+          }
+          html += '<span style="background-color: #' + val +
+            ';padding: 4px;border: black solid 1px;' + colsty + '">' + val + '</span>';
+        }
+        else if (type == DURATION) {
+          if (!donebr) {
+            //html += '<br/>';
+          }
+          html += ' <span>' + val / 1000 + 's</span>';
+        }
+        else {
+          html += "Unknown type: " + control;
+        }
+      }
+      html += '</p>';
+      p.innerHTML = html;
+
       var button = document.createElement('button');
       button.innerText = "Edit Scheme";
       button._led = i;
@@ -280,18 +280,21 @@
       setFile('/metadata.json', JSON.stringify(metadata));
     }
 
-    function getFile(filename, callfunc, errorfunc, extra) {
+    function getFile(filename, callfunc) {
       fetch(filename).
         then(function (response) {
           return response.text();
         })
         .then(function (response) {
-          callfunc(response, extra);
+          callfunc(response);
         })
         .catch(error => console.error("Error getting file:", error));
     }
 
-    function setFile(filename, datastr) {
+    function setFile(filename, datastr, completefunc) {
+      if (!completefunc) {
+        completefunc = function () { };
+      }
       var formData = new FormData();
       formData.append('data', new Blob([datastr]), filename);
       fetch('/edit', {
@@ -299,6 +302,7 @@
         body: formData
       })
         .then(function (res) { console.log("setFile:", filename, res) })
+        .then(completefunc)
         .catch(error => console.error("setFile Error:", error));
     }
 
@@ -338,6 +342,7 @@
         cell = row.insertCell(-1);
         var field = document.createElement('input');
         field._led = i;
+        field.size = 8;
         var picker = new jscolor(field);
         picker.fromString(databack["colors"][i]);
         field.onchange = function () {
@@ -366,12 +371,68 @@
       }
     }
 
+    // Websocket Stuff
+    var ws = null;
+    function ge(s) { return document.getElementById(s); }
+    function ce(s) { return document.createElement(s); }
+    function sendBlob(str) {
+      var buf = new Uint8Array(str.length);
+      for (var i = 0; i < str.length; ++i) buf[i] = str.charCodeAt(i);
+      ws.send(buf);
+    }
+
+    function startSocket() {
+      ws = new WebSocket('ws://' + document.location.host + '/ws', ['lights']);
+      ws.binaryType = "arraybuffer";
+      ws.onopen = function (e) {
+        console.log("Connected");
+      };
+      ws.onclose = function (e) {
+        console.log("Disconnected, will reconnect in 2 second");
+        setTimeout(function () {
+          startSocket();
+        }, 2000);
+      };
+      ws.onerror = function (e) {
+        console.log("WS Error", e);
+        ws.close();
+      };
+      ws.onmessage = function (e) {
+        var msg = "";
+        if (e.data instanceof ArrayBuffer) {
+          msg = "BIN:";
+          var bytes = new Uint8Array(e.data);
+          for (var i = 0; i < bytes.length; i++) {
+            msg += String.fromCharCode(bytes[i]);
+          }
+        } else {
+          msg = "TXT:" + e.data;
+        }
+        console.log(msg);
+      };
+      /*
+      ge("input_el").onkeydown = function (e) {
+        if (e.keyCode == 13 && ge("input_el").value != "") {
+          ws.send(ge("input_el").value);
+          ge("input_el").value = "";
+        }
+      }
+      */
+    }
+
+    function doRainbow() {
+      fetch('/rainbow')
+        .then(function (response) {
+          console.log("Doing rainbow!");
+        })
+        .catch(error => console.error(error));
+    }
   </script>
 </head>
 
 <body onLoad="startRefresh();">
   <h1>LEGO Lights!</h1>
-  <table>
+  <table class="table table-striped ">
     <thead>
       <tr>
         <th>LED</th>
@@ -383,8 +444,12 @@
     <tbody id="tablebody">
     </tbody>
   </table>
-  <button onclick="refreshScheme();">Chip refresh schemes</button>
 
+  <button onclick="setScheme();" class="btn btn-primary" style="position: fixed;top: 10px;right: 10px;display: none;"
+    id="setschemebtn">Save LED Schemes</button>
+  <p>&nbsp;</p>
+
+  <button onclick="doRainbow();" class="btn btn-success">Do Rainbow!</button>
   <p>&nbsp;</p>
   <div>
     <textarea id="stripsizes">20</textarea>
